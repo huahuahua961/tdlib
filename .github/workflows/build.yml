@@ -97,6 +97,10 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE=D:\a\tdlib\tdlib\vcpkg\scripts\buildsystems\vcpkg.cmake ^
             -DVCPKG_TARGET_TRIPLET=x64-windows ^
             -DGPERF_EXECUTABLE=D:\a\tdlib\tdlib\vcpkg\installed\x64-windows\tools\gperf\gperf.exe ^
+            -DZLIB_LIBRARY=D:\a\tdlib\tdlib\vcpkg\installed\x64-windows\lib\zlib.lib ^
+            -DZLIB_INCLUDE_DIR=D:\a\tdlib\tdlib\vcpkg\installed\x64-windows\include ^
+            -DOPENSSL_ROOT_DIR=D:\a\tdlib\tdlib\vcpkg\installed\x64-windows ^
+            -DOPENSSL_INCLUDE_DIR=D:\a\tdlib\tdlib\vcpkg\installed\x64-windows\include ^
             -DCMAKE_BUILD_TYPE=Release ^
             ..
 
