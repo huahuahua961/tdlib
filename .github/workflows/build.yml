@@ -90,6 +90,11 @@ jobs:
           call vcpkg\bootstrap-vcpkg.bat
           vcpkg\vcpkg install openssl:x64-windows zlib:x64-windows
 
+      - name: Install gperf
+        shell: cmd
+        run: |
+          choco install gperf -y
+
       - name: Configure CMake
         shell: cmd
         run: |
