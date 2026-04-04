@@ -107,7 +107,7 @@ jobs:
       - name: Build tdjson
         shell: cmd
         run: |
-          cmake --build build --target tdjson --config Release
+          cmake --build build --config Release
 
       - name: Collect DLLs
         shell: cmd
