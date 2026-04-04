@@ -1,24 +1,4 @@
-name: Build TDLib Windows
-
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: windows-2022
-    steps:
-      - name: Checkout TDLib
-        uses: actions/checkout@v4
-        with:
-          repository: tdlib/td
-          ref: master
-
-      - name: Apply patch
-        shell: python
-        run: |
-          with open("td/telegram/AuthManager.cpp", "r", encoding="utf-8") as f:
+a "r", encoding="utf-8") as f:
               content = f.read()
 
           old = (
@@ -90,6 +70,11 @@ jobs:
           call vcpkg\bootstrap-vcpkg.bat
           vcpkg\vcpkg install openssl:x64-windows zlib:x64-windows
 
+      - name: Install gperf
+        shell: cmd
+        run: |
+          choco install gperf -y
+
       - name: Configure CMake
         shell: cmd
         run: |
@@ -107,4 +92,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tdjson-windows-x64
-          path: build/Release/tdjson.dll
+          path: |
+            build/Release/tdjson.dll
+            vcpkg/installed/x64-windows/bin/*.dll
