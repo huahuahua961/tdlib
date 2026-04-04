@@ -1,0 +1,110 @@
+name: Build TDLib Windows
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout TDLib
+        uses: actions/checkout@v4
+        with:
+          repository: tdlib/td
+          ref: master
+
+      - name: Apply patch
+        shell: python
+        run: |
+          with open("td/telegram/AuthManager.cpp", "r", encoding="utf-8") as f:
+              content = f.read()
+
+          old = (
+              "void AuthManager::on_send_code_result(NetQueryPtr &&net_query) {\n"
+              "  auto r_sent_code = fetch_result<telegram_api::auth_sendCode>(std::move(net_query));\n"
+              "  if (r_sent_code.is_error()) {\n"
+              "    return on_current_query_error(r_sent_code.move_as_error());\n"
+              "  }\n"
+              "  on_sent_code(r_sent_code.move_as_ok());\n"
+              "}"
+          )
+
+          new = (
+              "void AuthManager::on_send_code_result(NetQueryPtr &&net_query) {\n"
+              "  auto r_sent_code = fetch_result<telegram_api::auth_sendCode>(std::move(net_query));\n"
+              "  if (r_sent_code.is_error()) {\n"
+              "    auto error = r_sent_code.move_as_error();\n"
+              "    auto msg = error.message().str();\n"
+              "    if (msg.rfind(\"RECAPTCHA_CHECK_\", 0) == 0) {\n"
+              "      auto sep = msg.find(\"__\");\n"
+              "      std::string action = (sep != std::string::npos) ? msg.substr(16, sep - 16) : msg.substr(16);\n"
+              "      std::string key_id = (sep != std::string::npos) ? msg.substr(sep + 2) : \"\";\n"
+              "      int64 vid = ++recaptcha_verification_id_;\n"
+              "      pending_recaptcha_net_query_ = std::move(net_query);\n"
+              "      send_closure(G()->td(), &Td::send_update,\n"
+              "        td_api::make_object<td_api::updateApplicationRecaptchaVerificationRequired>(vid, action, key_id));\n"
+              "      return;\n"
+              "    }\n"
+              "    return on_current_query_error(std::move(error));\n"
+              "  }\n"
+              "  on_sent_code(r_sent_code.move_as_ok());\n"
+              "}"
+          )
+
+          if old in content:
+              content = content.replace(old, new)
+              with open("td/telegram/AuthManager.cpp", "w", encoding="utf-8") as f:
+                  f.write(content)
+              print("AuthManager.cpp patched OK")
+          else:
+              raise Exception("Target not found in AuthManager.cpp")
+
+      - name: Patch AuthManager header
+        shell: python
+        run: |
+          with open("td/telegram/AuthManager.h", "r", encoding="utf-8") as f:
+              content = f.read()
+
+          # Add new member variables before the closing of the class
+          old = "  void on_send_code_result(NetQueryPtr &&net_query);"
+          new = (
+              "  void on_send_code_result(NetQueryPtr &&net_query);\n"
+              "  int64 recaptcha_verification_id_ = 0;\n"
+              "  NetQueryPtr pending_recaptcha_net_query_;"
+          )
+
+          if old in content:
+              content = content.replace(old, new)
+              with open("td/telegram/AuthManager.h", "w", encoding="utf-8") as f:
+                  f.write(content)
+              print("AuthManager.h patched OK")
+          else:
+              raise Exception("Target not found in AuthManager.h")
+
+      - name: Setup vcpkg
+        shell: cmd
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git
+          call vcpkg\bootstrap-vcpkg.bat
+          vcpkg\vcpkg install openssl:x64-windows zlib:x64-windows
+
+      - name: Configure CMake
+        shell: cmd
+        run: |
+          mkdir build
+          cd build
+          cmake -A x64 -DCMAKE_TOOLCHAIN_FILE=%CD%\..\vcpkg\scripts\buildsystems\vcpkg.cmake -DCMAKE_BUILD_TYPE=Release ..
+
+      - name: Build tdjson
+        shell: cmd
+        run: |
+          cd build
+          cmake --build . --target tdjson --config Release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tdjson-windows-x64
+          path: build/Release/tdjson.dll
