@@ -107,12 +107,12 @@ jobs:
           cmake --build build --target tdjson --config Release
 
       - name: Collect DLLs
-        shell: cmd
+        shell: pwsh
         run: |
-          mkdir output
-          copy build\Release\tdjson.dll output\
-          for %f in (vcpkg\installed\x64-windows\bin\*.dll) do copy "%f" output\
-          dir output\
+          New-Item -ItemType Directory -Force -Path output
+          Copy-Item build\Release\tdjson.dll output\
+          Copy-Item vcpkg\installed\x64-windows\bin\*.dll output\ -ErrorAction SilentlyContinue
+          Get-ChildItem output\
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
