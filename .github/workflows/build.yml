@@ -41,7 +41,6 @@ jobs:
               "      std::string action = (sep != std::string::npos) ? msg.substr(16, sep - 16) : msg.substr(16);\n"
               "      std::string key_id = (sep != std::string::npos) ? msg.substr(sep + 2) : \"\";\n"
               "      int64 vid = ++recaptcha_verification_id_;\n"
-              "      pending_recaptcha_net_query_ = std::move(net_query);\n"
               "      send_closure(G()->td(), &Td::send_update,\n"
               "        td_api::make_object<td_api::updateApplicationRecaptchaVerificationRequired>(vid, action, key_id));\n"
               "      return;\n"
@@ -68,8 +67,7 @@ jobs:
           old = "  void on_send_code_result(NetQueryPtr &&net_query);"
           new = (
               "  void on_send_code_result(NetQueryPtr &&net_query);\n"
-              "  int64 recaptcha_verification_id_ = 0;\n"
-              "  NetQueryPtr pending_recaptcha_net_query_;"
+              "  int64 recaptcha_verification_id_ = 0;"
           )
           if old in content:
               content = content.replace(old, new)
@@ -79,16 +77,14 @@ jobs:
           else:
               raise Exception("Target not found in AuthManager.h")
 
-      - name: Setup vcpkg
+      - name: Setup vcpkg and dependencies
         shell: cmd
         run: |
           git clone https://github.com/Microsoft/vcpkg.git
-          cd vcpkg
-          bootstrap-vcpkg.bat
-          cd ..
+          call vcpkg\bootstrap-vcpkg.bat
           vcpkg\vcpkg.exe install gperf:x64-windows openssl:x64-windows zlib:x64-windows
 
-      - name: Configure CMake
+      - name: Add gperf to PATH and Configure CMake
         shell: cmd
         run: |
           mkdir build
@@ -100,24 +96,22 @@ jobs:
             -DZLIB_LIBRARY=D:\a\tdlib\tdlib\vcpkg\installed\x64-windows\lib\zlib.lib ^
             -DZLIB_INCLUDE_DIR=D:\a\tdlib\tdlib\vcpkg\installed\x64-windows\include ^
             -DOPENSSL_ROOT_DIR=D:\a\tdlib\tdlib\vcpkg\installed\x64-windows ^
-            -DOPENSSL_INCLUDE_DIR=D:\a\tdlib\tdlib\vcpkg\installed\x64-windows\include ^
             -DCMAKE_BUILD_TYPE=Release ^
             ..
 
       - name: Build tdjson
         shell: cmd
+        env:
+          PATH: D:\a\tdlib\tdlib\vcpkg\installed\x64-windows\tools\gperf;${{ env.PATH }}
         run: |
-          cmake --build build --config Release
+          cmake --build build --target tdjson --config Release
 
       - name: Collect DLLs
         shell: cmd
         run: |
-          echo === vcpkg bin contents ===
-          dir vcpkg\installed\x64-windows\bin\
           mkdir output
           copy build\Release\tdjson.dll output\
           for %f in (vcpkg\installed\x64-windows\bin\*.dll) do copy "%f" output\
-          echo === output contents ===
           dir output\
 
       - name: Upload artifact
