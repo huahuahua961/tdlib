@@ -21,7 +21,15 @@ jobs:
           with open("td/telegram/AuthManager.cpp", "r", encoding="utf-8") as f:
               content = f.read()
 
-          old = (
+          # Patch 1: intercept RECAPTCHA_CHECK in on_result
+          old1 = (
+              "          on_current_query_error(net_query->move_as_error());\n"
+              "          return;\n"
+              "        }\n"
+              "        if (type != NetQueryType::RequestQrCode && type != NetQueryType::ImportQrCode &&\n"
+              "            type != NetQueryType::GetPassword && type != NetQueryType::FinishPasskeyLogin) {"
+          )
+          new1 = (
               "          auto error = net_query->move_as_error();\n"
               "          if (type == NetQueryType::SendCode && error.message().str().rfind(\"RECAPTCHA_CHECK_\", 0) == 0) {\n"
               "            auto msg = error.message().str();\n"
@@ -29,67 +37,74 @@ jobs:
               "            std::string action = (sep != std::string::npos) ? msg.substr(16, sep - 16) : msg.substr(16);\n"
               "            std::string key_id = (sep != std::string::npos) ? msg.substr(sep + 2) : \"\";\n"
               "            int64 vid = ++recaptcha_verification_id_;\n"
+              "            query_id_ = 0;\n"
+              "            net_query_id_ = 0;\n"
+              "            net_query_type_ = NetQueryType::None;\n"
               "            send_closure(G()->td(), &Td::send_update,\n"
               "              td_api::make_object<td_api::updateApplicationRecaptchaVerificationRequired>(vid, action, key_id));\n"
               "            return;\n"
               "          }\n"
               "          on_current_query_error(std::move(error));\n"
-              "          return;"
+              "          return;\n"
+              "        }\n"
+              "        if (type != NetQueryType::RequestQrCode && type != NetQueryType::ImportQrCode &&\n"
+              "            type != NetQueryType::GetPassword && type != NetQueryType::FinishPasskeyLogin) {"
           )
 
-          if old in content:
-              print("New patch already applied, skipping")
-          else:
-              old2 = (
-                  "          on_current_query_error(net_query->move_as_error());\n"
-                  "          return;\n"
-                  "        }\n"
-                  "        if (type != NetQueryType::RequestQrCode && type != NetQueryType::ImportQrCode &&\n"
-                  "            type != NetQueryType::GetPassword && type != NetQueryType::FinishPasskeyLogin) {"
-              )
-              new2 = (
-                  "          auto error = net_query->move_as_error();\n"
-                  "          if (type == NetQueryType::SendCode && error.message().str().rfind(\"RECAPTCHA_CHECK_\", 0) == 0) {\n"
-                  "            auto msg = error.message().str();\n"
-                  "            auto sep = msg.find(\"__\");\n"
-                  "            std::string action = (sep != std::string::npos) ? msg.substr(16, sep - 16) : msg.substr(16);\n"
-                  "            std::string key_id = (sep != std::string::npos) ? msg.substr(sep + 2) : \"\";\n"
-                  "            int64 vid = ++recaptcha_verification_id_;\n"
-                  "            query_id_ = 0;\n"
-                  "            net_query_id_ = 0;\n"
-                  "            net_query_type_ = NetQueryType::None;\n"
-                  "            send_closure(G()->td(), &Td::send_update,\n"
-                  "              td_api::make_object<td_api::updateApplicationRecaptchaVerificationRequired>(vid, action, key_id));\n"
-                  "            return;\n"
-                  "          }\n"
-                  "          on_current_query_error(std::move(error));\n"
-                  "          return;\n"
-                  "        }\n"
-                  "        if (type != NetQueryType::RequestQrCode && type != NetQueryType::ImportQrCode &&\n"
-                  "            type != NetQueryType::GetPassword && type != NetQueryType::FinishPasskeyLogin) {"
-              )
-              if old2 in content:
-                  content = content.replace(old2, new2)
-                  with open("td/telegram/AuthManager.cpp", "w", encoding="utf-8") as f:
-                      f.write(content)
-                  print("AuthManager.cpp patched OK")
-              else:
-                  print("ERROR: Target not found, dumping context...")
-                  idx = content.find("on_current_query_error(net_query->move_as_error())")
-                  print(repr(content[max(0,idx-300):idx+300]))
-                  raise Exception("Patch failed")
+          # Patch 2: handle setApplicationVerificationToken for recaptcha
+          old2 = (
+              "void AuthManager::on_send_code_result(NetQueryPtr &&net_query) {\n"
+              "  auto r_sent_code = fetch_result<telegram_api::auth_sendCode>(std::move(net_query));\n"
+              "  if (r_sent_code.is_error()) {\n"
+              "    return on_current_query_error(r_sent_code.move_as_error());\n"
+              "  }\n"
+              "  on_sent_code(r_sent_code.move_as_ok());\n"
+              "}"
+          )
+          new2 = (
+              "void AuthManager::set_recaptcha_verification_token(uint64 query_id, int64 verification_id, string token) {\n"
+              "  if (verification_id != recaptcha_verification_id_ || recaptcha_verification_id_ == 0) {\n"
+              "    return on_query_error(query_id, Status::Error(400, \"Wrong verification_id\"));\n"
+              "  }\n"
+              "  on_new_query(query_id);\n"
+              "  start_net_query(NetQueryType::SendCode,\n"
+              "    G()->net_query_creator().create_unauth(\n"
+              "      telegram_api::invokeWithReCaptcha(\n"
+              "        std::move(token),\n"
+              "        send_code_helper_.send_code(\n"
+              "          send_code_helper_.get_phone_number().str(),\n"
+              "          pending_phone_settings_,\n"
+              "          api_id_, api_hash_\n"
+              "        )\n"
+              "      )\n"
+              "    )\n"
+              "  );\n"
+              "}\n"
+              "void AuthManager::on_send_code_result(NetQueryPtr &&net_query) {\n"
+              "  auto r_sent_code = fetch_result<telegram_api::auth_sendCode>(std::move(net_query));\n"
+              "  if (r_sent_code.is_error()) {\n"
+              "    return on_current_query_error(r_sent_code.move_as_error());\n"
+              "  }\n"
+              "  on_sent_code(r_sent_code.move_as_ok());\n"
+              "}"
+          )
 
-          # Now patch set_application_verification_token to handle recaptcha
-          old3 = "void AuthManager::set_application_verification_token(uint64 query_id, int64 verification_id, string &&token) {"
-          if old3 in content:
-              # find the function and add recaptcha handling
-              idx = content.find(old3)
-              end_idx = content.find("\nvoid AuthManager::", idx + len(old3))
-              func_body = content[idx:end_idx]
-              print("Found set_application_verification_token:")
-              print(repr(func_body[:500]))
+          if old1 in content:
+              content = content.replace(old1, new1)
+              print("Patch 1 applied OK")
           else:
-              print("set_application_verification_token not found, will handle in Python layer")
+              idx = content.find("on_current_query_error(net_query->move_as_error())")
+              print(repr(content[max(0,idx-200):idx+200]))
+              raise Exception("Patch 1 failed")
+
+          if old2 in content:
+              content = content.replace(old2, new2)
+              print("Patch 2 applied OK")
+          else:
+              raise Exception("Patch 2 failed")
+
+          with open("td/telegram/AuthManager.cpp", "w", encoding="utf-8") as f:
+              f.write(content)
 
       - name: Apply patch to AuthManager.h
         shell: python
@@ -100,10 +115,9 @@ jobs:
           old = "  void on_send_code_result(NetQueryPtr &&net_query);"
           new = (
               "  void on_send_code_result(NetQueryPtr &&net_query);\n"
+              "  void set_recaptcha_verification_token(uint64 query_id, int64 verification_id, string token);\n"
               "  int64 recaptcha_verification_id_ = 0;\n"
-              "  string pending_recaptcha_phone_number_;\n"
-              "  td_api::object_ptr<td_api::phoneNumberAuthenticationSettings> pending_recaptcha_settings_;\n"
-              "  void set_application_verification_token(int64 verification_id, string token);"
+              "  td_api::object_ptr<td_api::phoneNumberAuthenticationSettings> pending_phone_settings_;"
           )
           if old in content:
               content = content.replace(old, new)
@@ -112,6 +126,30 @@ jobs:
               print("AuthManager.h patched OK")
           else:
               raise Exception("Target not found in AuthManager.h")
+
+      - name: Apply patch to Td.cpp for setApplicationVerificationToken
+        shell: python
+        run: |
+          with open("td/telegram/Td.cpp", "r", encoding="utf-8") as f:
+              content = f.read()
+
+          # Find setApplicationVerificationToken handler and add recaptcha support
+          old = (
+              "void Td::on_request(uint64 id, td_api::setApplicationVerificationToken &request) {\n"
+              "  CHECK_IS_USER();\n"
+              "  CLEAN_INPUT_STRING(request.token_);"
+          )
+          if old in content:
+              idx = content.find(old)
+              end = content.find("\nvoid Td::", idx + len(old))
+              func = content[idx:end]
+              print("Found setApplicationVerificationToken handler:")
+              print(repr(func[:800]))
+          else:
+              print("setApplicationVerificationToken handler not found in Td.cpp")
+              # search for it differently
+              idx = content.find("setApplicationVerificationToken")
+              print(repr(content[max(0,idx-100):idx+500]))
 
       - name: Setup vcpkg and dependencies
         shell: cmd
