@@ -87,6 +87,7 @@ jobs:
       - name: Add gperf to PATH and Configure CMake
         shell: cmd
         run: |
+          set PATH=D:\a\tdlib\tdlib\vcpkg\installed\x64-windows\tools\gperf;%PATH%
           mkdir build
           cd build
           cmake -A x64 ^
@@ -101,9 +102,8 @@ jobs:
 
       - name: Build tdjson
         shell: cmd
-        env:
-          PATH: D:\a\tdlib\tdlib\vcpkg\installed\x64-windows\tools\gperf;${{ env.PATH }}
         run: |
+          set PATH=D:\a\tdlib\tdlib\vcpkg\installed\x64-windows\tools\gperf;%PATH%
           cmake --build build --target tdjson --config Release
 
       - name: Collect DLLs
