@@ -62,9 +62,9 @@ jobs:
               "}"
           )
           new2 = (
-              "void AuthManager::set_recaptcha_verification_token(uint64 query_id, int64 verification_id, string token) {\n"
+              "void AuthManager::set_recaptcha_verification_token(uint64 query_id, int64 verification_id, string token, Promise<Unit> promise) {\n"
               "  if (verification_id != recaptcha_verification_id_ || recaptcha_verification_id_ == 0) {\n"
-              "    return on_query_error(query_id, Status::Error(400, \"Wrong verification_id\"));\n"
+              "    return promise.set_error(Status::Error(400, \"Wrong verification_id\"));\n"
               "  }\n"
               "  on_new_query(query_id);\n"
               "  start_net_query(NetQueryType::SendCode,\n"
@@ -79,6 +79,7 @@ jobs:
               "      )\n"
               "    )\n"
               "  );\n"
+              "  promise.set_value(Unit());\n"
               "}\n"
               "void AuthManager::on_send_code_result(NetQueryPtr &&net_query) {\n"
               "  auto r_sent_code = fetch_result<telegram_api::auth_sendCode>(std::move(net_query));\n"
@@ -115,9 +116,8 @@ jobs:
           old = "  void on_send_code_result(NetQueryPtr &&net_query);"
           new = (
               "  void on_send_code_result(NetQueryPtr &&net_query);\n"
-              "  void set_recaptcha_verification_token(uint64 query_id, int64 verification_id, string token);\n"
-              "  int64 recaptcha_verification_id_ = 0;\n"
-              "  td_api::object_ptr<td_api::phoneNumberAuthenticationSettings> pending_phone_settings_;"
+              "  void set_recaptcha_verification_token(uint64 query_id, int64 verification_id, string token, Promise<Unit> promise);\n"
+              "  int64 recaptcha_verification_id_ = 0;"
           )
           if old in content:
               content = content.replace(old, new)
@@ -127,29 +127,39 @@ jobs:
           else:
               raise Exception("Target not found in AuthManager.h")
 
-      - name: Apply patch to Td.cpp for setApplicationVerificationToken
+      - name: Apply patch to Requests.cpp for setApplicationVerificationToken
         shell: python
         run: |
-          with open("td/telegram/Td.cpp", "r", encoding="utf-8") as f:
+          with open("td/telegram/Requests.cpp", "r", encoding="utf-8") as f:
               content = f.read()
 
-          # Find setApplicationVerificationToken handler and add recaptcha support
           old = (
-              "void Td::on_request(uint64 id, td_api::setApplicationVerificationToken &request) {\n"
+              "void Requests::on_request(uint64 id, td_api::setApplicationVerificationToken &request) {\n"
               "  CHECK_IS_USER();\n"
-              "  CLEAN_INPUT_STRING(request.token_);"
+              "  CLEAN_INPUT_STRING(request.token_);\n"
+              "  CREATE_OK_REQUEST_PROMISE();\n"
+              "  G()->net_query_dispatcher().set_verification_token(request.verification_id_, std::move(request.token_),\n"
+              "                                                     std::move(promise));\n"
+              "}"
+          )
+          new = (
+              "void Requests::on_request(uint64 id, td_api::setApplicationVerificationToken &request) {\n"
+              "  CHECK_IS_USER();\n"
+              "  CLEAN_INPUT_STRING(request.token_);\n"
+              "  CREATE_OK_REQUEST_PROMISE();\n"
+              "  send_closure(td_->auth_manager_actor_, &AuthManager::set_recaptcha_verification_token,\n"
+              "    id, request.verification_id_, std::move(request.token_), std::move(promise));\n"
+              "}"
           )
           if old in content:
-              idx = content.find(old)
-              end = content.find("\nvoid Td::", idx + len(old))
-              func = content[idx:end]
-              print("Found setApplicationVerificationToken handler:")
-              print(repr(func[:800]))
+              content = content.replace(old, new)
+              with open("td/telegram/Requests.cpp", "w", encoding="utf-8") as f:
+                  f.write(content)
+              print("Requests.cpp patched OK")
           else:
-              print("setApplicationVerificationToken handler not found in Td.cpp")
-              # search for it differently
               idx = content.find("setApplicationVerificationToken")
-              print(repr(content[max(0,idx-100):idx+500]))
+              print(repr(content[max(0,idx-50):idx+400]))
+              raise Exception("Requests.cpp patch failed")
 
       - name: Setup vcpkg and dependencies
         shell: cmd
